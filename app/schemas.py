@@ -1,9 +1,10 @@
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
+from typing import List, Optional, TYPE_CHECKING
 
 class NodeCreate(BaseModel):
-    parent_id: Optional[int] = None
+    parent_name: str
     node_name: str
 
 class NodeResponse(BaseModel):
@@ -16,3 +17,16 @@ class NodeResponse(BaseModel):
 
     class Config:
         orm_mode = True
+        
+
+class NodeTreeResponse(BaseModel):
+    node_id: int
+    node_name: str
+    parent_id: Optional[int] = None
+    children: List["NodeTreeResponse"] = []  # recursive field
+
+    class Config:
+        orm_mode = True
+
+# Fix forward reference (important!)
+NodeTreeResponse.model_rebuild()
