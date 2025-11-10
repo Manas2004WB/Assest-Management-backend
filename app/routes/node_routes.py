@@ -3,13 +3,13 @@ from sqlalchemy.orm import Session
 from typing import List
 from app.database import SessionLocal
 from app.models import NodeData
-from app.schemas import NodeCreate, NodeResponse , NodeTreeResponse
+from app.schemas import NodeCreate, NodeResponse, NodeTreeResponse
 from app.crud import get_descendants
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from typing import List
-
+from urllib.parse import unquote_plus
 router = APIRouter()
 
 
@@ -28,22 +28,21 @@ def get_nodes(db: Session = Depends(get_db)):
     nodes = result.fetchall()
     return [dict(row._mapping) for row in nodes]
 
+
 @router.get("/nodes/tree", response_model=List[NodeTreeResponse])
 def get_nodes_tree(db: Session = Depends(get_db)):
-    query = text("SELECT * FROM node_data;")
+    query = text("SELECT * FROM node_data WHERE is_deleted = 0;")
     result = db.execute(query)
     nodes = [dict(row._mapping) for row in result.fetchall()]
-
-    # Convert flat list → tree
-    node_map = {n["node_id"]: {**n, "children": []} for n in nodes}
+    node_map = {n["node_id"]: {**n, "children": [], "children_count": 0} for n in nodes}
     tree = []
     for n in node_map.values():
         parent_id = n.get("parent_id")
         if parent_id and parent_id in node_map:
             node_map[parent_id]["children"].append(n)
+            node_map[parent_id]["children_count"] += 1 
         else:
             tree.append(n)
-
     return tree
 
 @router.post("/nodes", response_model=NodeResponse)
@@ -53,7 +52,8 @@ def create_node(node: NodeCreate, db: Session = Depends(get_db)):
         FROM node_data 
         WHERE node_name = :parent_name AND is_deleted = 0
     """)
-    parent_result = db.execute(parent_query, {"parent_name": node.parent_name}).first()
+    parent_result = db.execute(
+        parent_query, {"parent_name": node.parent_name}).first()
 
     if not parent_result:
         raise HTTPException(
@@ -76,7 +76,6 @@ def create_node(node: NodeCreate, db: Session = Depends(get_db)):
     new_node = result.fetchone()
     db.commit()
     return dict(new_node._mapping)
-
 
 
 @router.put("/nodes/{node_id}", response_model=NodeResponse)
@@ -105,27 +104,27 @@ def update_node(node_id: int, node: NodeCreate, db: Session = Depends(get_db)):
 
 @router.delete("/nodes/{node_id}")
 def delete_node(node_id: int, db: Session = Depends(get_db)):
-    node_query = text(
-        "SELECT node_id, parent_id FROM node_data WHERE node_id = :node_id")
+    node_query = text("SELECT node_id, parent_id FROM node_data WHERE node_id = :node_id")
     node = db.execute(node_query, {"node_id": node_id}).fetchone()
 
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
     if node.parent_id == 0:
-        raise HTTPException(
-            status_code=400, detail="Root node cannot be deleted")
+        raise HTTPException(status_code=400, detail="Root node cannot be deleted")
 
     child_nodes = get_descendants(db, node_id, return_objects=True)
     try:
         if child_nodes:
-            child_ids = tuple(child.node_id for child in child_nodes)
+            child_ids = [child.node_id for child in child_nodes]
+            placeholders = ", ".join(map(str, child_ids))
             update_children_query = text(
-                "UPDATE node_data SET is_deleted = 1 WHERE node_id IN :child_ids"
+                f"UPDATE node_data SET is_deleted = 1 WHERE node_id IN ({placeholders})"
             )
-            db.execute(update_children_query, {"child_ids": child_ids})
+            db.execute(update_children_query)
 
         update_node_query = text(
-            "UPDATE node_data SET is_deleted = 1 WHERE node_id = :node_id")
+            "UPDATE node_data SET is_deleted = 1 WHERE node_id = :node_id"
+        )
         db.execute(update_node_query, {"node_id": node_id})
 
         db.commit()
@@ -137,7 +136,6 @@ def delete_node(node_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @router.delete("/hard-nodes/{node_id}")
 def delete_node(node_id: int, db: Session = Depends(get_db)):
@@ -174,15 +172,18 @@ def delete_node(node_id: int, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.get("/nodes/search")
 def search_nodes(q: str = Query(..., min_length=1), db: Session = Depends(get_db)):
+    decoded_q = unquote_plus(q)
     query = text("""
-        SELECT node_id, node_name
-        FROM node_data
-        WHERE node_name LIKE :search
-          AND is_deleted = 0
-        ORDER BY node_name
-        OFFSET 0 ROWS FETCH NEXT 20 ROWS ONLY
-    """)
-    result = db.execute(query, {"search": f"%{q}%"}).fetchall()
-    return [dict(row._mapping) for row in result]
+    SELECT node_id, node_name
+    FROM node_data
+    WHERE node_name LIKE :pattern
+      AND is_deleted = 0
+    ORDER BY node_name
+    OFFSET 0 ROWS FETCH NEXT 20 ROWS ONLY
+""")
+    result = db.execute(query, {"pattern": f"%{decoded_q}%"})
+
+    return [dict(row._mapping) for row in result.fetchall()]

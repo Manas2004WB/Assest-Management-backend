@@ -23,7 +23,8 @@ class NodeTreeResponse(BaseModel):
     node_id: int
     node_name: str
     parent_id: Optional[int] = None
-    children: List["NodeTreeResponse"] = []  # recursive field
+    children_count : int
+    children: List["NodeTreeResponse"] = []
 
     class Config:
         orm_mode = True
