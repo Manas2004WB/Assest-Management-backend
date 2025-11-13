@@ -17,13 +17,21 @@ class NodeResponse(BaseModel):
 
     class Config:
         orm_mode = True
-        
+
+class DeletedNodeTree(BaseModel):
+    node_id: int
+    node_name: str
+    parent_id: Optional[int] = None
+    children: List["DeletedNodeTree"] = []
+
+DeletedNodeTree.model_rebuild() 
 
 class NodeTreeResponse(BaseModel):
     node_id: int
     node_name: str
     parent_id: Optional[int] = None
     children_count : int
+    is_deleted : bool
     children: List["NodeTreeResponse"] = []
 
     class Config:
