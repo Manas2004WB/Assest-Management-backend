@@ -4,20 +4,22 @@ from fastapi import FastAPI
 from app.database import engine, Base
 from app.routes import node_routes
 from fastapi.middleware.cors import CORSMiddleware
+from app.routes import auth_routes
 
-origins =["*"]
 app = FastAPI(title="Asset Hierarchy API")
-app.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins,
-        allow_credentials=True,  # Allow cookies to be sent with cross-origin requests
-        allow_methods=["*"],     # Allow all HTTP methods (GET, POST, PUT, DELETE, etc.)
-        allow_headers=["*"],     # Allow all headers in the request
-)
 
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"], 
+    allow_credentials=True, 
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 Base.metadata.create_all(bind=engine)
 app.include_router(node_routes.router, prefix="/api", tags=["Nodes"])
+app.include_router(auth_routes.router, prefix="/api")
 
 @app.get("/db-test")
 def test_db_connection():

@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, requests
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import SessionLocal
 from app.models import NodeData
-from app.schemas import NodeCreate, NodeResponse, NodeTreeResponse,DeletedNodeTree
+from app.schemas import NodeCreate, NodeResponse, NodeTreeResponse, DeletedNodeTree
 from app.crud import get_descendants
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
@@ -11,6 +12,8 @@ from sqlalchemy.orm import Session
 from typing import List
 from urllib.parse import unquote_plus
 from sqlalchemy import text, bindparam
+from fastapi import Depends
+from app.auth import get_current_user
 router = APIRouter()
 
 
@@ -31,21 +34,20 @@ def get_nodes(db: Session = Depends(get_db)):
 
 
 @router.get("/nodes/tree", response_model=List[NodeTreeResponse])
-def get_nodes_tree(db: Session = Depends(get_db)):
+def get_nodes_tree(db: Session = Depends(get_db),current_user: str = Depends(get_current_user)):
     query = text("SELECT * FROM node_data WHERE is_deleted = 0;")
     result = db.execute(query)
     nodes = [dict(row._mapping) for row in result.fetchall()]
-    node_map = {n["node_id"]: {**n, "children": [], "children_count": 0} for n in nodes}
+    node_map = {n["node_id"]: {**n, "children": [],
+                               "children_count": 0} for n in nodes}
     tree = []
 
- 
     for n in node_map.values():
         parent_id = n.get("parent_id")
         if parent_id and parent_id in node_map:
             node_map[parent_id]["children"].append(n)
         else:
             tree.append(n)
-
 
     def count_children(node):
         if not node["children"]:
@@ -64,24 +66,27 @@ def get_nodes_tree(db: Session = Depends(get_db)):
     return tree
 
 
-@router.get("/nodes/tree-withDeleted", response_model=List[NodeTreeResponse])
-def get_nodes_tree(db: Session = Depends(get_db)):
-    query = text("SELECT * FROM node_data")
-    result = db.execute(query)
-    nodes = [dict(row._mapping) for row in result.fetchall()]
-    node_map = {n["node_id"]: {**n, "children": [], "children_count": 0} for n in nodes}
-    tree = []
-    for n in node_map.values():
-        parent_id = n.get("parent_id")
-        if parent_id and parent_id in node_map:
-            node_map[parent_id]["children"].append(n)
-            node_map[parent_id]["children_count"] += 1 
-        else:
-            tree.append(n)
-    return tree
+# @router.get("/nodes/tree-withDeleted", response_model=List[NodeTreeResponse])
+# def get_nodes_tree(db: Session = Depends(get_db)):
+#     query = text("SELECT * FROM node_data")
+#     result = db.execute(query)
+#     nodes = [dict(row._mapping) for row in result.fetchall()]
+#     node_map = {n["node_id"]: {**n, "children": [], "children_count": 0} for n in nodes}
+#     tree = []
+#     for n in node_map.values():
+#         parent_id = n.get("parent_id")
+#         if parent_id and parent_id in node_map:
+#             node_map[parent_id]["children"].append(n)
+#             node_map[parent_id]["children_count"] += 1
+#         else:
+#             tree.append(n)
+#     return tree
 
 @router.post("/nodes", response_model=NodeResponse)
-def create_node(node: NodeCreate, db: Session = Depends(get_db)):
+def create_node(node: NodeCreate, 
+                db: Session = Depends(get_db), 
+                current_user: str = Depends(get_current_user)
+                ):
     parent_query = text("""
         SELECT node_id 
         FROM node_data 
@@ -135,6 +140,7 @@ def update_node(node_id: int, node: NodeCreate, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.put("/nodes/restore/{node_id}", response_model=NodeResponse)
 def restore_node(node_id: int, db: Session = Depends(get_db)):
@@ -190,13 +196,15 @@ def restore_node(node_id: int, db: Session = Depends(get_db)):
 
 @router.delete("/nodes/{node_id}")
 def delete_node(node_id: int, db: Session = Depends(get_db)):
-    node_query = text("SELECT node_id, parent_id FROM node_data WHERE node_id = :node_id")
+    node_query = text(
+        "SELECT node_id, parent_id FROM node_data WHERE node_id = :node_id")
     node = db.execute(node_query, {"node_id": node_id}).fetchone()
 
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
     if node.parent_id == 0:
-        raise HTTPException(status_code=400, detail="Root node cannot be deleted")
+        raise HTTPException(
+            status_code=400, detail="Root node cannot be deleted")
 
     child_nodes = get_descendants(db, node_id, return_objects=True)
     try:
@@ -222,6 +230,7 @@ def delete_node(node_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.delete("/hard-nodes/{node_id}")
 def delete_node(node_id: int, db: Session = Depends(get_db)):
@@ -288,7 +297,6 @@ def get_deleted_trees(db: Session = Depends(get_db)):
 
     deleted_nodes = [dict(row) for row in all_deleted]
 
- 
     deleted_ids = {n["node_id"] for n in deleted_nodes}
     deleted_roots = [
         n for n in deleted_nodes if not n["parent_id"] or n["parent_id"] not in deleted_ids
@@ -301,4 +309,3 @@ def get_deleted_trees(db: Session = Depends(get_db)):
     deleted_trees = [node_map[r["node_id"]] for r in deleted_roots]
 
     return deleted_trees
-

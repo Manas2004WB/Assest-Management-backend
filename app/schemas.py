@@ -24,18 +24,32 @@ class DeletedNodeTree(BaseModel):
     parent_id: Optional[int] = None
     children: List["DeletedNodeTree"] = []
 
-DeletedNodeTree.model_rebuild() 
+# Fix forward reference for Pydantic v1.x
+DeletedNodeTree.update_forward_refs()
 
 class NodeTreeResponse(BaseModel):
     node_id: int
     node_name: str
     parent_id: Optional[int] = None
-    children_count : int
-    is_deleted : bool
+    children_count: int
+    is_deleted: bool
     children: List["NodeTreeResponse"] = []
 
     class Config:
         orm_mode = True
 
-# Fix forward reference (important!)
-NodeTreeResponse.model_rebuild()
+# Fix forward reference for Pydantic v1.x
+NodeTreeResponse.update_forward_refs()
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
